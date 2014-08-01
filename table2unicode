@@ -1,0 +1,20 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+use File::Basename qw(basename);
+my $short0 = basename($0);
+
+die "Usage: $short0 in.table out.txt\n" unless scalar @ARGV == 2;
+
+open IN, '<', $ARGV[0] or die "Unable to read '$ARGV[0]': $@\n";
+open OUT, '>:utf8', $ARGV[1] or die "Unable to write '$ARGV[1]': $@\n";
+
+foreach (<IN>) {
+    s/U\+([0-9a-fA-F]+)/\[@{[ chr hex $1 ]}\]/g;
+    print OUT;
+}
+
+close IN;
+close OUT;
+
+# eof

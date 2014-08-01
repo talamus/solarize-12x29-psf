@@ -1,0 +1,83 @@
+
+# Solarize.12x29.psfu
+
+
+## About This Font
+
+This package provides a large size 512 glyph console font. It is
+especially designed for prolonged word processing in multiple
+languages.
+
+Because this font contains over 256 glyphs the hardware bold text
+property of your console will be turned off.
+
+
+## Characters Available
+
+* Latin
+* Greek
+* Main european cyrillic letters
+* Pinyin
+
+Please see Solarize.12x29.txt for full list.
+
+
+## Installing
+
+### One time use
+
+Extract the file `Solarize.12x29.psfu.gz` and load it into your
+console with command:
+    $ setfont Solarize.12x29.psfu.gz
+
+### System wide default font
+
+As root:
+
+1. Extract the file `Solarize.12x29.psfu.gz` into your console
+font directory. In Debian that is `/usr/share/consolefonts`.
+
+2. Change the console default font. In Debian that means editing the
+`/etc/default/console-setup` file.
+
+3. Test the changes with the `setupcon` command.
+
+4. Make changes permanent by updating your `initramfs` with `update-initramfs -u`.
+
+
+## Licensing
+
+Licensed under GPLv2.
+
+
+## History
+
+Origins of this font can be traced to the Sun Microsystems
+SPARCstation console. In some early days of Linux development that
+font was donated to be a part of the Linux kernel.
+
+After that:
+
+* sun12x22.psfu was extracted from the kernel source
+
+* iso01-12x22.psfu was derived from sun12x22.psfu by Kurt Garloff
+
+* LatGrkCyr-12x22.psfu was derived from iso01-12x22.psfu by Ken Moffat (zarniwhoop)
+
+* Solarize.12x22.psfu was derived from LatGrkCyr-12x22.psfu by Tero Niemi (talamus)
+
+The original LatGrkCyr-12x22.psfu had the following note by Ken Moffat:
+> The [LatGrkCyr-]12x22 font is derived from iso01-12x22 and hence
+> from the sun 12x22 font included in the linux kernel, therefore it
+> is licensed under the GPLv2.
+
+Both the original note and the font can be found at Linux kernel
+keyboard tools (kbd): http://www.kbd-project.org/download/
+
+(For completeness sake: iso02-12x22.psfu was derived from
+sun12x22.psfu by Jacek Lipkowski)
+
+
+# Thank You!
+
+Have fun!

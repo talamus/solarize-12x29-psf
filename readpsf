@@ -1,0 +1,497 @@
+#!/usr/bin/perl
+#
+# readpsf v1.0 (c) 2012 Tero Niemi
+#
+# Convert Linux console font to either Plain Text or BMP image.
+#
+# Plain Text follows 'nafe' (Not Another Font Editor) format
+# written 2004 by Corvus Corax.
+#
+use strict;
+use warnings;
+
+my $VERSION = "readpsf v1.0 (c) 2012 Tero Niemi (tero\x2eniemi\x40nimbus\x2efi)";
+
+### Parse command line parameters and print usage if needed ##########
+
+my %CONFIG = (
+    glyphs => undef,
+    top => 0,
+    left => 0,
+    width => undef,
+    height => undef,
+    edge => 'undef',
+    show_usage => 0,
+    output_format => undef,
+    psf_filename => undef,
+    bmp_row_width => 16,
+    bmp_foreground => 'FFFFFF',
+    bmp_background_1 => '000000',
+    bmp_background_2 => '222222',
+    bmp_background_3 => '003399',
+);
+
+for (my $i = 0; $i < scalar @ARGV;) {
+    ++$i and next unless $ARGV[$i] =~ /^-/;
+    $_ = splice @ARGV, $i, 1;
+
+    last if /^--$/;
+
+    if (/^-[cg](\d+)$/i or /^--chars=(\d+)$/i) {
+        die "check parameter '$_'\n" if $1 < 1;
+        $CONFIG{glyphs} = int $1;
+        next;
+    } elsif (/^-t([\+-]?\d+)$/i or /^--top=([\+-]?\d+)$/i) {
+        $CONFIG{top} = int $1;
+        next;
+    } elsif (/^-l([\+-]?\d+)$/i or /^--left=([\+-]?\d+)$/i) {
+        $CONFIG{left} = int $1;
+        next;
+    } elsif (/^-w(\d+)$/i or /^--width=(\d+)$/i) {
+        die "check parameter '$_'\n" if $1 < 1;
+        $CONFIG{width} = int $1;
+        next;
+    } elsif (/^-h(\d+)$/i or /^--height=(\d+)$/i) {
+        die "check parameter '$_'\n" if $1 < 1;
+        $CONFIG{height} = int $1;
+        next;
+    } elsif (/^--?[h\?]/i) {
+        $CONFIG{show_usage} = 1;
+        next;
+    } elsif (/^-e([wr])/i or /^--edge=([wr])$/i) {
+        $CONFIG{edge} = $1 eq 'w' ? 'wrap' : 'repeat';
+        next;
+    } elsif (/^-br(\d+)$/i or /^--bmp-row-width=(\d+)$/i) {
+        die "check parameter '$_'\n" if $1 < 1;
+        $CONFIG{bmp_row_width} = int $1;
+        next;
+    } elsif (/^-bf([0-9a-f]{6})$/i or /^--bmp-foreground=([0-9a-f]{6})$/i) {
+        $CONFIG{bmp_foreground} = uc $1;
+        next;
+    } elsif (/^-bb([1-3)([0-9a-f]{6})$/i or /^--bmp-background-([1-3)=([0-9a-f]{6})$/i) {
+        $CONFIG{"bmp_background_$1"} = uc $2;
+        next;
+    } else {
+        die "Unknown command line parameter '$_'.\nTry '-?' for help.\n";
+    }
+}
+
+if ($CONFIG{show_usage}) {
+    my $short0 = $0;
+    eval {
+        require File::Spec;
+        File::Spec->import();
+        (undef, undef, $short0) = File::Spec->splitpath($0);
+    };
+print<<"___________________________________________________________";
+$VERSION
+
+Convert Linux Console Font to either Plain Text or BMP Image.
+
+Usage: $short0 [options] font.psf[u] (bmp|txt)
+
+Glyphs:
+  -cN  --chars=N      Override number of characters to be written.
+                      (Numbers 256 and 512 are the most portable.)
+Geometry:
+  -tN  --top=N        Override character geometry.
+  -lN  --left=N       (Top and left can be negative numbers.)
+  -wN  --width=N
+  -hN  --height=N
+
+Edge:
+  -ew  --edge=wrap    When running out of pixels: wrap character.
+  -er  --edge=repeat  When running out of pixels: repeat edge pixels.
+                      (Default action: use empty pixels.)
+Bitmap:
+  -brN       --bmp-row-width=N          How many glyphs on a row?
+  -bfFFFFFF  --bmp-foreground=FFFFFF    Foreground color.
+  -bb1FFFFFF --bmp-background-1=FFFFFF  First background color.
+  -bb2FFFFFF --bmp-background-2=FFFFFF  Second background color.
+  -bb3FFFFFF --bmp-background-3=FFFFFF  Background color for unused tiles.
+
+Examples:
+
+  $short0 -top=1 -er font.psf txt
+       Move the whole font 1 pixel up, duplicate the bottom pixel row.
+
+  $short0 -t-3 -h18 font.psf bmp
+       Add 3 empty pixel rows to the top of the font, force height.
+
+Please note that this program does not read the Unicode mapping table.
+It has to be manually read by running the 'psfgettable' command.
+___________________________________________________________
+    exit 1;
+}
+
+eval {
+    die "File name missing.\n" if scalar @ARGV < 1;
+    die "Choose output format: txt bmp\n" if scalar @ARGV < 2;
+    die "Extra argument '$ARGV[2]'\n" if scalar @ARGV > 2;
+    die "Unknown output format '$ARGV[1]', should be either: txt bmp\n"
+                               if lc $ARGV[1] ne 'txt' and lc $ARGV[1] ne 'bmp';
+}; die "$@Try '-?' for help.\n" if $@;
+
+$CONFIG{psf_filename} = $ARGV[0];
+$CONFIG{output_format} = lc $ARGV[1];
+
+### Read PSF file in #################################################
+
+open PSFFILE, '<:raw', $CONFIG{psf_filename} or die "$CONFIG{psf_filename}: $!\n";
+print "Reading '$CONFIG{psf_filename}'...\n";
+
+### Read header
+my %psf_sizes = ();
+{
+    my $header;
+    read PSFFILE, $header, 4 or die "$!\n";
+    if ($header =~ /^\x36\x04/) {
+        print "Version 1 PSF file.\n";
+        my (undef, undef, $mode, $height) = unpack('C*', $header);
+
+        print "Font has an unicode table. Use 'psfgettable' command to extract it.\n" if $mode & 0b010;
+        print "Font has sequences.\n" if $mode & 0b100;
+        die "Unknown mode.\n" if $mode > 0x111;
+
+        %psf_sizes = (
+            glyphs => $mode & 0b001 ? 512 : 256,
+            height => $height,
+            width => 8,
+            char_size => $height,
+            bytes_per_row => 1,
+        );
+
+    } elsif ($header =~ /^\x72\xb5\x4a\x86/) {
+        print "Version 2 PSF file.\n";
+        read PSFFILE, $header, 7*4 or die "$!\n";
+        my (
+            $version,
+            $header_size,
+            $flags,
+            $glyphs,
+            $char_size,
+            $height,
+            $width,
+        ) = unpack('V*', $header);
+
+        die "Unknown sub-version.\n" if $version != 0;
+        die "Unknown header size.\n" if $header_size != 32;
+        print "Font has an unicode table. Use 'psfgettable' command to extract it.\n" if $flags & 1;
+
+        my $bytes_per_row = ceil($width / 8);
+        die "Mismatch in char byte size.\n" if $char_size != $height * $bytes_per_row;
+
+        %psf_sizes = (
+            glyphs => $glyphs,
+            height => $height,
+            width => $width,
+            char_size => $char_size,
+            bytes_per_row => $bytes_per_row,
+        );
+    } else {
+        die "Not a PSF file.\n";
+    }
+}
+
+### Manage configuration
+{
+    print "PSF file suggests $psf_sizes{glyphs} glyphs of size $psf_sizes{width} x $psf_sizes{height}.\n";
+
+    $CONFIG{glyphs} = defined $CONFIG{glyphs} ? $CONFIG{glyphs} : $psf_sizes{glyphs};
+    $CONFIG{width} = defined $CONFIG{width} ? $CONFIG{width} : $psf_sizes{width};
+    $CONFIG{height} = defined $CONFIG{height} ? $CONFIG{height} : $psf_sizes{height};
+    $CONFIG{bytes_per_line} = ceil($CONFIG{width} / 8);
+    $CONFIG{bytes_per_glyph} = $CONFIG{bytes_per_line} * $CONFIG{height};
+
+    if ($CONFIG{glyphs} != $psf_sizes{glyphs}
+        or $CONFIG{width} != $psf_sizes{width}
+        or $CONFIG{height} != $psf_sizes{height}) {
+        print "We are using values: $CONFIG{glyphs} glyphs of size $CONFIG{width} x $CONFIG{height}.\n";
+    }
+
+    print "Warning: Number of glyphs is not multiple of 256.\n" if $CONFIG{glyphs} % 256;
+    print "Warning: Number of glyphs is over 512.\n" if $CONFIG{glyphs} > 512;
+}
+
+### Read data
+my %glyphs = ();
+{
+    for (my $glyph = 0; $glyph < $psf_sizes{glyphs}; ++$glyph) {
+        $glyphs{$glyph} = new_cell();
+        for (my $y = 0; $y < $psf_sizes{height}; ++$y) {
+            my $x = 0;
+            for (my $byte = 0; $byte < $psf_sizes{bytes_per_row}; ++$byte) {
+                my $byte_value;
+                read PSFFILE, $byte_value, 1 or die "$!\n";
+                $byte_value = ord $byte_value;
+                for (my $bit = 8; $bit--;) {
+                    cell_set($glyphs{$glyph}, $x, $y, 1) if $byte_value & 2**$bit;
+                    ++$x;
+                }
+            }
+        }
+    }
+
+    print "$psf_sizes{glyphs} glyphs found";
+    if ($psf_sizes{glyphs} > $CONFIG{glyphs}) {
+        print ', ';
+        print $psf_sizes{glyphs} - $CONFIG{glyphs};
+        print ' glyphs are going to be skipped';
+    }
+    print ".\n\n";
+}
+close PSFFILE;
+
+### Write data out ###################################################
+
+### Write Plain Text file
+if ($CONFIG{output_format} eq 'txt') {
+
+    my $txt_filename = $CONFIG{psf_filename};
+    $txt_filename =~ s/\.psfu?$//i;
+    $txt_filename .= ".$CONFIG{width}x$CONFIG{height}.txt";
+
+    open TEXTFILE, '>', $txt_filename or die "'$txt_filename': $!\n";
+    printf TEXTFILE "++font-text-file\n++chars\n%i\n++width\n%i\n++height\n%i\n",
+        $CONFIG{glyphs}, $CONFIG{width}, $CONFIG{height};
+
+    for (my $glyph = 0; $glyph < $CONFIG{glyphs}; ++$glyph) {
+        printf TEXTFILE "++---%03i-0x%02x-%s-\n",
+            $glyph, $glyph, $glyph > 31 && $glyph < 256 ? "'".chr($glyph)."'" : '---';
+
+        my $glyph_data = $glyphs{$glyph};
+        $glyph_data = new_cell() if not defined $glyph_data;  # undefined glyph
+
+        for (my $y = 0; $y < $CONFIG{height}; ++$y) {
+            for (my $x = 0; $x < $CONFIG{width}; ++$x) {
+                if (cell_get($glyphs{$glyph}, $x + $CONFIG{left}, $y + $CONFIG{top},
+                             $CONFIG{edge}, $psf_sizes{width}, $psf_sizes{height})) {
+                    print TEXTFILE 'X';
+                } else {
+                    print TEXTFILE ' ';
+                }
+            }
+            print TEXTFILE "\n";
+        }
+    }
+
+    close TEXTFILE;
+    print "'$txt_filename' written. All Ok.\n";
+    exit 0;
+}
+
+### Still here? Create an image
+my $image = [];
+{
+    print "Creating an image.\n\n";
+    my $image_width = $CONFIG{bmp_row_width} * $CONFIG{width};
+    my $image_height = ceil($CONFIG{glyphs} / $CONFIG{bmp_row_width}) * $CONFIG{height};
+
+    $image = new_image($image_width, $image_height, $CONFIG{bmp_background_3});
+
+    for (my $glyph = 0; $glyph < $CONFIG{glyphs}; ++$glyph) {
+
+        my $image_col = $glyph % $CONFIG{bmp_row_width};
+        my $image_row = int($glyph / $CONFIG{bmp_row_width});
+
+        my $glyph_data = $glyphs{$glyph};
+        $glyph_data = new_cell() if not defined $glyph_data;  # undefined glyph
+
+        for (my $y = 0; $y < $CONFIG{height}; ++$y) {
+            for (my $x = 0; $x < $CONFIG{width}; ++$x) {
+
+                my $image_x = $image_col * $CONFIG{width} + $x;
+                my $image_y = $image_row * $CONFIG{height} + $y;
+
+                if (cell_get($glyphs{$glyph}, $x + $CONFIG{left}, $y + $CONFIG{top},
+                             $CONFIG{edge}, $psf_sizes{width}, $psf_sizes{height})) {
+                    $image->[$image_x][$image_y] = $CONFIG{bmp_foreground};
+                } else {
+                    $image->[$image_x][$image_y] = ($image_col + $image_row) & 1 ?
+                        $CONFIG{bmp_background_2} : $CONFIG{bmp_background_1};
+                }
+            }
+        }
+    }
+}
+
+### Write BMP image
+{
+    my $bmp_filename = $CONFIG{psf_filename};
+    $bmp_filename =~ s/\.psfu?$//i;
+    $bmp_filename .= ".$CONFIG{width}x$CONFIG{height}.bmp";
+    save_BMP($bmp_filename, $image);
+    print "'$bmp_filename' written. All Ok.\n";
+}
+exit 0;
+# eop
+
+### Subroutines ######################################################
+
+# Round up (int() rounds down)
+sub ceil {
+    my $num = shift;
+    my $i = int($num);
+    return $i + 1 if $num - $i > 0;
+    return $i;
+}
+
+### Smart 2D cellmap
+#
+# (This is a bastardized version. You can set cells only on positive
+# coordinates, but you can read from both positive and negative
+# coordinates. Intelligent wrapping is included)
+
+# New empty cell
+sub new_cell {
+    return {
+        cell => 1,
+        max_x => undef,
+        max_y => undef,
+    };
+}
+
+# Set single cell
+sub cell_set {
+    my ($cell, $x, $y, $value) = (@_);
+    die 'cell_set: not a cell' unless $cell->{cell};
+    if (not defined $cell->{max_x}) {
+        $cell->{max_x} = $x;
+        $cell->{max_y} = $y;
+    } else {
+        $cell->{max_x} = $cell->{max_x} > $x ? $cell->{max_x} : $x;
+        $cell->{max_y} = $cell->{max_y} > $y ? $cell->{max_y} : $y;
+    }
+    $cell->{$x}{$y} = $value;
+}
+
+# Get cell value
+sub cell_get {
+    my $cell = shift;
+    return undef unless $cell->{cell};
+    return undef if not defined $cell->{max_x};
+
+    my ($x, $y, $edge_policy, $width, $height) = @_;
+    my $real_width = $cell->{max_x} + 1;
+    my $real_height = $cell->{max_y} + 1;
+    $width = $real_width > $width ? $real_width : $width;
+    $height = $real_height > $height ? $real_height : $height;
+
+    if ($edge_policy eq 'undef') {
+        return $cell->{$x}{$y};
+    }
+
+    elsif ($edge_policy eq 'wrap') {
+        $x = $x % $width;
+        $y = $y % $height;
+        return $cell->{$x}{$y};
+    }
+
+    elsif ($edge_policy eq 'repeat') {
+        $x = $x < 0 ? 0 : $x;
+        $y = $y < 0 ? 0 : $y;
+        $x = $x > ($width-1) ? ($width-1) : $x;
+        $y = $y > ($height-1) ? ($height-1) : $y;
+        return $cell->{$x}{$y};
+    }
+}
+
+### BMP image handling
+
+# Save BMP image
+sub save_BMP {
+    my $filename = shift;
+    my $image = shift;
+    open BMP, '>:raw', $filename                            or die "'$filename': $!\n";
+
+    my ($width, $height) = image_dimensions($image);
+    my $bytes_per_row = int(($width*3 + 3)/4)*4;
+    my $padding_per_row = $bytes_per_row - $width*3;
+
+    # Write header
+    print BMP pack 'a2 V n2 V4 v2 V6', (
+        'BM',                         # a2: Id
+        54 + $height*$bytes_per_row,  # V: Total file size in bytes
+        0xcafe,                       # v: Reserved 1
+        0xbabe,                       # v: Reserved 2
+        54,                           # V: Image data offset
+        40,                           # V: Remaining header size
+        $width,                       # V: Image width
+        $height,                      # V: Image height
+        1,                            # v: Number of bit planes
+        24,                           # v: Color bit depth
+        0,                            # V: Compression method
+        $height*$bytes_per_row,       # V: Image data size in bytes
+        0,                            # V: Horizontal dpi
+        0,                            # V: Vertical dpi
+        0,                            # V: Palette size
+        0,                            # V: Important colors
+    )                                                       or die "save_BMP: Unable to write header.\n";
+
+    # Write image
+    for (my $y = $height; $y--;) {
+        my $row = '';
+        for (my $x = 0; $x < $width; ++$x) {
+            my ($r, $g, $b) = hex_to_RGB($image->[$x][$y]);
+            $row .= chr($b).chr($g).chr($r);
+        }
+        $row .= pack "C$padding_per_row", 0;
+        print BMP $row                                      or die "save_BMP: Unable to write image data.\n";
+    }
+
+    close BMP;
+}
+
+# Convert RGB values to hex color
+sub RGB_to_hex {
+    my ($r, $g, $b) = @_;
+    return sprintf "%02X%02X%02X", $r, $g, $b;
+}
+
+# Convert hex color to RGB values
+sub hex_to_RGB {
+    $_ = shift;
+    $_ = '(undef)' if not defined $_;
+    if (/^#?([0-9A-F]{2})([0-9A-F]{2})([0-9A-F]{2})$/) {
+        return (hex $1, hex $2, hex $3);
+    } elsif (/^#?([0-9A-F]{2})[0-9A-F]{2}([0-9A-F]{2})[0-9A-F]{2}([0-9A-F]{2})[0-9A-F]{2}$/) {
+        return (hex $1, hex $2, hex $3);
+    }
+    die "hex_to_RGB: Odd color '$_'\n";
+}
+
+# Is hex color grayscale?
+sub is_grayscale {
+    my ($r, $g, $b) = hex_to_RGB(shift);
+    return $r == $g and $g == $b;
+}
+
+# Is hex color black?
+sub is_black {
+    my ($r, $g, $b) = hex_to_RGB(shift);
+    return $r == 0 and $g == 0 and $b == 0;
+}
+
+# Create new image
+sub new_image {
+    my ($width, $height, $color) = (@_, 'FFFFFF');
+    my $image;
+
+    for (my $y = $height; $y--;) {
+        for (my $x = $width; $x--;) {
+            $image->[$x][$y] = $color;
+        }
+    }
+
+    return $image;
+}
+
+# Get image size
+sub image_dimensions {
+    my $image = shift;
+    ref $image eq 'ARRAY'         or die "image_dimensions: Not an image\n";
+    ref $image->[0] eq 'ARRAY'    or die "image_dimensions: Broken image\n";
+    return (scalar @$image, scalar @{$image->[0]});
+}
+
+# eof
