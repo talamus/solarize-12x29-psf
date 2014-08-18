@@ -5,7 +5,7 @@ echo Creating Solarize font...
 echo
 
 rm -f Solarize.12x29.psf*
-writepsf Solarize.12x29.bmp
+./writepsf Solarize.12x29.bmp
 psfaddtable Solarize.12x29.psf Solarize.12x29.table Solarize.12x29.psfu
 gzip Solarize.12x29.psfu
 
